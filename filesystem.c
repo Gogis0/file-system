@@ -8,9 +8,44 @@
 #define FILE_T_OFFSET 0
 
 typedef struct {
-	char name[MAX_FILENAME];
-	unsigned int size;
+    char name[MAX_FILENAME];
+    unsigned int size;
 } zero_sector_t;
+
+/* FAT entry */
+typedef struct {
+    char name[MAX_FILENAME];
+    char flags; /* ci je to directory, atd. */
+    int idx_addr; /* adresa indexoveho segmentu */
+} file_header;
+
+
+/* nacitam hlavicku zo segmentu na pozicii 'pos' a vratim ju */
+file_header read_header(char *segment, int pos) {
+    int header_sz = sizeof(file_header);
+
+    char buffer[header_sz];
+    for (int i = 0; i < header_sz; i++) {
+        buffer[i] = segment[pos + i];
+    }
+    file_header fh;
+    memcpy(&fh, buffer, header_sz);
+
+    return fh;
+}
+
+
+/* zapisem file_header do nacitaneho segmentua v pamati */
+void write_header(char *segment, int pos, file_header fh) {
+    int header_sz = sizeof(file_header);
+
+    char buffer[header_sz];
+    memcpy(buffer, &fh, sizeof(header_sz));
+    for (int i = 0; i < header_sz; i++) {
+        segment[pos + i] = buffer[i];
+    }
+}
+
 /**
  * Naformatovanie disku.
  *
@@ -20,8 +55,13 @@ typedef struct {
 
 void fs_format()
 {
-	uint8_t buffer[256] = { 0 };
-	hdd_write(0, buffer);
+    int hdd_sz = hdd_size();
+    uint8_t BITMAP_SZ = hdd_sz / (SECTOR_SIZE*SECTOR_SIZE*8);
+    /* Na zaciatku chcem mat bitmapu na spravu priestoru na disku
+        a za nou FAT-tabulku, zaznacim to teda do bitmapy */
+
+    uint8_t buffer[256] = { 0 };
+    hdd_write(0, buffer);
 }
 
 /**
