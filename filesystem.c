@@ -3,9 +3,13 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
+#include <limits.h>
 
 /* file_t info items */
 #define FILE_T_OFFSET 0
+
+int free_space_start = -1;
 
 typedef struct {
     char name[MAX_FILENAME];
@@ -16,8 +20,13 @@ typedef struct {
 typedef struct {
     char name[MAX_FILENAME];
     char flags; /* ci je to directory, atd. */
-    int idx_addr; /* adresa indexoveho segmentu */
+    int next; /* dalsi file na rovnakom leveli, v pripade suboru prvy data segment*/
 } file_header;
+
+/* SPACE entry */
+typedef struct {
+    int next;
+} space_block;
 
 
 /* nacitam hlavicku zo segmentu na pozicii 'pos' a vratim ju */
@@ -35,7 +44,7 @@ file_header read_header(char *segment, int pos) {
 }
 
 
-/* zapisem file_header do nacitaneho segmentua v pamati */
+/* zapisem file_header do nacitaneho sectoru v pamati */
 void write_header(char *segment, int pos, file_header fh) {
     int header_sz = sizeof(file_header);
 
@@ -53,15 +62,23 @@ void write_header(char *segment, int pos, file_header fh) {
  * cely vynulovany.
  */
 
-void fs_format()
-{
-    int hdd_sz = hdd_size();
-    uint8_t BITMAP_SZ = hdd_sz / (SECTOR_SIZE*SECTOR_SIZE*8);
-    /* Na zaciatku chcem mat bitmapu na spravu priestoru na disku
-        a za nou FAT-tabulku, zaznacim to teda do bitmapy */
+void fs_format() {
+    int hdd_sz = hdd_size() / SECTOR_SIZE;
 
-    uint8_t buffer[256] = { 0 };
+    /* vytvorim a zapisem adresar '/' */
+    file_header root = {"/", 1, -1};
+    uint8_t buffer[SECTOR_SIZE];
+    memcpy(buffer, &root, sizeof(file_header));
     hdd_write(0, buffer);
+
+    /* vytvorim a zapisem mantinely oznacujuce volne sectory */
+    space_block init = {hdd_sz - 1};
+    space_block term = {-1};
+
+    memcpy(buffer, &init, sizeof(space_block));
+    hdd_write(1, buffer);
+    memcpy(buffer, &term, sizeof(space_block));
+    hdd_write(hdd_sz-1, buffer);
 }
 
 /**
