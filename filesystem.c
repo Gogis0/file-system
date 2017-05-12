@@ -16,43 +16,70 @@ typedef struct {
     unsigned int size;
 } zero_sector_t;
 
-/* FAT entry */
+/* file header entry */
 typedef struct {
     char name[MAX_FILENAME];
-    char flags; /* ci je to directory, atd. */
-    int next; /* dalsi file na rovnakom leveli, v pripade suboru prvy data segment*/
+    int first_data_sector; /* prvy data segment*/
+    int next; /* dalsi file */
 } file_header;
+
+/* DATA entry */
+typedef struct {
+    int size;
+    int next;
+} data_block;
 
 /* SPACE entry */
 typedef struct {
+    int size; /* kolko sectorov z sebou je volnych */
     int next;
 } space_block;
 
 
 /* nacitam hlavicku zo segmentu na pozicii 'pos' a vratim ju */
-file_header read_header(char *segment, int pos) {
-    int header_sz = sizeof(file_header);
-
-    char buffer[header_sz];
-    for (int i = 0; i < header_sz; i++) {
-        buffer[i] = segment[pos + i];
-    }
+file_header read_header(int pos) {
+    uint8_t buffer[SECTOR_SIZE];
     file_header fh;
-    memcpy(&fh, buffer, header_sz);
-
+    hdd_read(pos, buffer);
+    memcpy(&fh, buffer, sizeof(file_header));
     return fh;
 }
 
 
 /* zapisem file_header do nacitaneho sectoru v pamati */
-void write_header(char *segment, int pos, file_header fh) {
-    int header_sz = sizeof(file_header);
+void write_header(int pos, file_header fh) {
+    uint8_t buffer[SECTOR_SIZE];
+    memcpy(buffer, &fh, sizeof(file_header));
+    hdd_write(pos, buffer);
+}
 
-    char buffer[header_sz];
-    memcpy(buffer, &fh, sizeof(header_sz));
-    for (int i = 0; i < header_sz; i++) {
-        segment[pos + i] = buffer[i];
+space_block read_space(int idx) {
+    uint8_t buffer[SECTOR_SIZE];
+    hdd_read(idx, buffer);
+    space_block sb;
+    memcpy(&sb, buffer, sizeof(space_block));
+    return sb;
+}
+
+void write_space(int idx, space_block sb) {
+    uint8_t buffer[SECTOR_SIZE];
+    memcpy(buffer, &sb, sizeof(space_block));
+    hdd_write(idx, buffer);
+}
+
+/* alokujem novy sector */
+int allocate_sector() {
+    space_block init = read_space(1);
+    space_block act = read_space(init.next);
+
+    if (act.size == 1) {
+        init.next = act.next;
+        write_space(1, init);
+        return init.next;
     }
+    act.size--;
+    write_space(init.next, act);
+    return init.next + act.size;
 }
 
 /**
@@ -64,19 +91,21 @@ void write_header(char *segment, int pos, file_header fh) {
 
 void fs_format() {
     int hdd_sz = hdd_size() / SECTOR_SIZE;
-
-    /* vytvorim a zapisem adresar '/' */
-    file_header root = {"/", 1, -1};
     uint8_t buffer[SECTOR_SIZE];
-    memcpy(buffer, &root, sizeof(file_header));
-    hdd_write(0, buffer);
+
+    /* vytvorim inicializacny subor na disku */
+    file_header fh = {.name = "/", .first_data_sector = -1, .next = -1};
+    write_header(0, fh);
 
     /* vytvorim a zapisem mantinely oznacujuce volne sectory */
-    space_block init = {hdd_sz - 1};
-    space_block term = {-1};
+    space_block init = {.size = 0, .next = 2};
+    space_block middle = {.size = hdd_sz-3, .next = hdd_sz-1};
+    space_block term = {.size = 0, .next = -1};
 
     memcpy(buffer, &init, sizeof(space_block));
     hdd_write(1, buffer);
+    memcpy(buffer, &middle, sizeof(space_block));
+    hdd_write(2, buffer);
     memcpy(buffer, &term, sizeof(space_block));
     hdd_write(hdd_sz-1, buffer);
 }
@@ -90,43 +119,49 @@ void fs_format() {
  * vrati FAIL (sam nevytvara adresarovu strukturu, moze vytvarat iba subory).
  */
 
-file_t *fs_creat(const char *path)
-{
-	uint8_t buffer[SECTOR_SIZE] = { 0 };
+file_t *fs_creat(const char *path) {
+        int header_sz = sizeof(file_header);
+        char name[MAX_FILENAME];
+        for (int i = 1; i < strlen(path); i++) {
+            name[i - 1] = path[i];
+	    /* adresare zahadzujem :D */
+            if (path[i] == '/') return (file_t*)FAIL;
+        }
 
-	/* Nepodporujeme adresare */
-	if (strrchr(path, PATHSEP) != path)
-		return (file_t*)FAIL;
+        if (strrchr(path, PATHSEP) != path) return (file_t*) FAIL;
 
-	/* Skontrolujeme, ci uz nahodou na disku nie je subor */
-	hdd_read(0, buffer);
+	/* skontrolujeme, ci existuje subor s rovnakym menom */
+	uint8_t buffer[SECTOR_SIZE];
+        int next_sector = 0;
+        int prev_sector = -1;
+        file_header fh;
+        do {
+            /* nacitam aktualny sector */
+            hdd_read(next_sector, buffer);
+            memcpy(&fh, buffer, header_sz);
+            prev_sector = next_sector;
+            next_sector = fh.next;
+            fprintf(stderr, "%d\n", next_sector);
+            /* ak subor uz existuje, skratim ho na 0 */
+            if (strcmp(fh.name, path) == 0) return (file_t*)FAIL;
+        } while (next_sector != -1);
 
-	if (buffer[0] != 0 ) {
-		/* Nemozeme vytvorit dalsi subor, ak nema rovnake meno, ako uz
-		 * existujuci
-		 */
-		if (strncmp(path, buffer, MAX_FILENAME))
-			return (file_t*)FAIL;
+        /* alokujem novy sector pre tento file */
+        int addr = allocate_sector();
+        fprintf(stderr, "%d\n", addr);
+        file_header new_file = {.name = *name, .first_data_sector = -1, .next = -1};
+        write_header(addr, new_file);
+        fh.next = addr;
+        write_header(prev_sector, fh);
 
-		/* Skratime subor na 0 bajtov */
-		((zero_sector_t*)buffer)->name[0] = 0;
-		hdd_write(0, buffer);
-	}
-	
-	/* Vsetko ok, pripravime informacie pre zapis do nulteho sektora */
-
-	/* Meno suboru je na zaciatku*/
-	strcpy(buffer, path);
-
-	/* Za castou vyhradenou pre meno je ulozena velkost suboru */
-	*((int*)(&buffer[MAX_FILENAME])) = 0;
-
-	/* Zapiseme informacie o novovytvorenom subore na disk */
-	hdd_write(0, buffer);
-
-	return fs_open(path);
+        file_t *fd;
+        fd = fd_alloc();
+        fd->info[0] = addr;
+        fd->info[1] = -1;
+        fd->info[2] = -1;
+        fd->info[3] = -1;
+        return fd;
 }
-
 
 /**
  * Otvorenie existujuceho suboru.
