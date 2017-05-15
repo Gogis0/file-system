@@ -8,7 +8,10 @@ int main(void)
 	fs_format();
 
 	fd = fs_creat("/test.txt");
-	fs_write(fd, "Hello, world!", 12);
+	fs_write(fd,
+        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+        50);
+        fs_write(fd, "aaaaaaaaa", 78);
 	fs_close(fd);
 
 	util_end();
