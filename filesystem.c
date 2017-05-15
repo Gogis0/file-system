@@ -210,6 +210,8 @@ int fs_unlink(const char *path) {
         file_header fh, prev;
         do {
             hdd_read(act_addr, &fh);
+            /* ak je otvoreny, vrat FAIL */
+            if ((fh.size & (1 << 7)) > 0) return FAIL;
             /* nasiel som subor, odstranim ho */
             if (strcmp(fh.name, &(path[1])) == 0) {
                 prev.next = fh.next;
@@ -311,7 +313,7 @@ int fs_write(file_t *fd, const uint8_t *bytes, unsigned int size) {
 
 
 int fs_seek(file_t *fd, unsigned int pos) {
-    if (pos >= SECTOR_SIZE - sizeof(file_header)) return FAIL;
+    if (pos >= DATA_SZ) return FAIL;
     fd->info[1] = pos;
     return OK;
 }
